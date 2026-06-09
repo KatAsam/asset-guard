@@ -184,6 +184,46 @@
     #drop-zone strong { color: #0087af; }
     #file-input { display: none; }
 
+    /* ── URL input ── */
+    .or-divider {
+      display: flex; align-items: center; gap: 0.75rem;
+      margin: 1rem 0; color: var(--text-dim); font-size: 0.85rem;
+    }
+    .or-divider::before, .or-divider::after {
+      content: ''; flex: 1; height: 1px; background: var(--border);
+    }
+    .url-row {
+      display: flex; gap: 0.5rem;
+    }
+    #url-input {
+      flex: 1;
+      padding: 0.55rem 0.8rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-family: 'SourceSans', sans-serif;
+      color: var(--text);
+      background: #fff;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    #url-input:focus { border-color: #0087af; }
+    #url-input::placeholder { color: #bbb; }
+    #url-load-btn {
+      background: linear-gradient(135deg, #00fff0 0%, #0087af 100%);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 0.55rem 1rem;
+      font-family: 'SourceSans', sans-serif;
+      font-weight: 700;
+      font-size: 0.82rem;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: opacity 0.15s;
+    }
+    #url-load-btn:hover { opacity: 0.85; }
+
     #preview-wrap { margin-top: 1rem; display: none; }
     #preview-img {
       width: 100%; max-height: 280px;
@@ -434,6 +474,12 @@
     </div>
     <input type="file" id="file-input" accept="image/jpeg,image/png,image/tiff,image/webp" onchange="onFileSelected(event)" />
 
+    <div class="or-divider">oder per URL</div>
+    <div class="url-row">
+      <input type="text" id="url-input" placeholder="https://m.media-amazon.com/images/I/…" onkeydown="if(event.key==='Enter')loadFromUrl()" />
+      <button id="url-load-btn" onclick="loadFromUrl()">Laden</button>
+    </div>
+
     <div id="preview-wrap">
       <img id="preview-img" alt="Vorschau" />
       <div class="img-meta">
@@ -479,6 +525,7 @@
 let apiKey = '';
 let imageBase64 = '';
 let imageMime = 'image/jpeg';
+let imageUrl = '';          // set when loading via URL
 
 // ── API Key ────────────────────────────────────────────
 function saveKey() {
@@ -492,6 +539,38 @@ function saveKey() {
   document.getElementById('api-status').className = 'api-status set';
   document.getElementById('api-key-input').value = '••••••••••••••••••••' + val.slice(-4);
   hideError();
+}
+
+// ── URL loading ────────────────────────────────────────
+function loadFromUrl() {
+  const raw = document.getElementById('url-input').value.trim();
+  if (!raw) { showError('Bitte eine Bild-URL eingeben.'); return; }
+  let url;
+  try { url = new URL(raw); } catch { showError('Ungültige URL.'); return; }
+  if (!['http:', 'https:'].includes(url.protocol)) { showError('Nur http/https-URLs erlaubt.'); return; }
+
+  hideError();
+  hideResults();
+  imageBase64 = '';             // clear file upload state
+  imageUrl = raw;
+
+  const img = document.getElementById('preview-img');
+  img.crossOrigin = 'anonymous';
+  img.src = raw;
+  img.onload = () => {
+    const w = img.naturalWidth, h = img.naturalHeight;
+    document.getElementById('meta-dims').textContent = w + ' × ' + h + ' px';
+    document.getElementById('res-warning').style.display = (w < 2000 || h < 2000) ? 'block' : 'none';
+  };
+  img.onerror = () => {
+    // preview may fail due to CORS – that's ok, analysis still works via URL
+    document.getElementById('meta-dims').textContent = '(Vorschau nicht verfügbar)';
+    document.getElementById('res-warning').style.display = 'none';
+  };
+  document.getElementById('meta-name').textContent = url.pathname.split('/').pop() || 'Amazon-Bild';
+  document.getElementById('meta-size').textContent = '';
+  document.getElementById('preview-wrap').style.display = 'block';
+  document.getElementById('analyze-btn').style.display = 'flex';
 }
 
 // ── File handling ──────────────────────────────────────
@@ -513,6 +592,7 @@ function onFileSelected(e) {
 function loadFile(file) {
   hideError();
   hideResults();
+  imageUrl = '';              // clear URL state
   imageMime = file.type || 'image/jpeg';
   const reader = new FileReader();
   reader.onload = ev => {
@@ -537,7 +617,7 @@ function loadFile(file) {
 // ── Analyze ────────────────────────────────────────────
 async function analyze() {
   if (!apiKey) { showError('Bitte zuerst einen Claude API-Key eingeben.'); return; }
-  if (!imageBase64) { showError('Bitte zuerst ein Bild hochladen.'); return; }
+  if (!imageBase64 && !imageUrl) { showError('Bitte zuerst ein Bild hochladen oder eine URL eingeben.'); return; }
 
   setLoading(true);
   hideError();
@@ -558,7 +638,10 @@ async function analyze() {
         messages: [{
           role: 'user',
           content: [
-            { type: 'image', source: { type: 'base64', media_type: imageMime, data: imageBase64 } },
+            { type: 'image', source: imageUrl
+                ? { type: 'url', url: imageUrl }
+                : { type: 'base64', media_type: imageMime, data: imageBase64 }
+            },
             { type: 'text', text: buildPrompt() }
           ]
         }]
